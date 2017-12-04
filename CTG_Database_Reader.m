@@ -23,15 +23,19 @@ addpath('/Users/Patricia/Documents/MATLAB/mcode'); % Patricia's path
 
 %% Get signal from database
 
+% define entry to analyze
+entry='1312';
+
 % Read the signal from the website using the rdsamp function. 
-[tm,Fs]=rdsamp('ctu-uhb-ctgdb/1001.dat'); % The rdsamp function has the website 'https://physionet.org/physiobank/database/' embedded within it.  You have to provide the rest of the website information for the database and file you want.
+[tm,Fs]=rdsamp(strcat('ctu-uhb-ctgdb/',entry,'.dat')); % The rdsamp function has the website 'https://physionet.org/physiobank/database/' embedded within it.  You have to provide the rest of the website information for the database and file you want.
 time=0:1/Fs:(length(tm)-1)/Fs; % According to the website, the data was sampled at 4 Hz
+time = time./60; % convert from seconds to minutes
 
 % Plot the traces.  The signal contains both FHR and UC traces.  The first is FHR, the second is UC
-figure;plot(time,tm(:,2));xlabel('Time (s)');ylabel('UC (arb. units)'); title('Raw Signal'); % Since the amplitude of the toco is meaningless, I put the y-axis as 'arbitrary units'.
+figure;plot(time,tm(:,2));xlabel('Time (min)');ylabel('UC (arb. units)'); title('Raw Signal'); % Since the amplitude of the toco is meaningless, I put the y-axis as 'arbitrary units'.
 
 % Plot a shorter section of the UC trace to allow for better visibility
-figure;plot(time(1:3000),tm(1:3000,2));xlabel('Time (s)');ylabel('UC (arb. units)'); title('Raw Signal (small)');
+figure;plot(time(1:3000),tm(1:3000,2));xlabel('Time (min)');ylabel('UC (arb. units)'); title('Raw Signal (small)');
 
 
 %% Filter - Low pass
@@ -70,7 +74,7 @@ x=1:length(sig);
 figure;
 plot(x,sig,'r',x,reconstrOut,'b'); 
 title('FFT filtered, original signals');
-xlabel('Time');
+xlabel('Samples');
 legend('Original','Filtered');
 
 %% Calculate slope of filtered signal
@@ -79,7 +83,7 @@ legend('Original','Filtered');
 slopes=zeros(size(tm));
 
 for i=1:(L-1)
-slopes(i,2)=50*(reconstrOut(i+1,1)-reconstrOut(i,1))/(time(i+1)-time(i));
+slopes(i,2)=5*(reconstrOut(i+1,1)-reconstrOut(i,1))/(time(i+1)-time(i));
 % the 50 is a multiplier used to bring the slope graph to a similar
 % magnitude as the signals
 end
@@ -116,14 +120,18 @@ thres_orig=(slopeMin(2)+0.63*range)*ones(1,length(thres));
 
 figure;
 hold on;
-plot(time(1:L),tm(1:L,2),'r');xlabel('Time (s)');ylabel('UC (arb. units)');
-plot(time(1:L),slopes(1:L,2),'b');xlabel('Time (s)');ylabel('Signal Slope');
+plot(time(1:L),tm(1:L,2),'r');xlabel('Time (min)');ylabel('UC (arb. units)');
 plot(time(1:L),reconstrOut,'k');
+plot(time(1:L),slopes(1:L,2),'b');xlabel('Time (min)');ylabel('Signal Slope');
 plot(time(1:L),thres,'m');
 plot(time(1:L),thres_orig,'g');
 hold off;
-legend('Raw','Filt. Slopes','Filt. Sig','Thres Moving','Thres Orig');
-title('Signal with Overlaid Thresholds')
+legend('Raw','Filt. Sig','Filt. Slopes','Thres Moving','Thres Orig');
+title('Signal with Overlaid Thresholds');
 
 disp(thres_orig(1));
 
+%% Output to Excel
+savepath = '/Users/Patricia/Documents/Rice/7th Semester/Senior Design/';
+
+xlswrite(strcat(savepath,'UC_Data_',entry),[time(1:L)' reconstrOut tm(1:L,2)]);
