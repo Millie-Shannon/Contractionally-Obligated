@@ -24,7 +24,7 @@ addpath('/Users/Patricia/Documents/MATLAB/mcode'); % Patricia's path
 %% Get signal from database
 
 % define entry to analyze
-entry='1312';
+entry='1003';
 
 % Read the signal from the website using the rdsamp function. 
 [tm,Fs]=rdsamp(strcat('ctu-uhb-ctgdb/',entry,'.dat')); % The rdsamp function has the website 'https://physionet.org/physiobank/database/' embedded within it.  You have to provide the rest of the website information for the database and file you want.
@@ -44,16 +44,26 @@ L=size(tm,1); % length of signal
 sig=tm(1:L,2); % set sig as only the 2nd column, the UC data
 
 fftSig=(fft(sig)); % fourier of signal
+f = Fs * (0:(L/2))/L; % frequency domain captured in fft 
+P2 = abs(fftSig/L); % amplitude spectrum (???)
+P1 = P2(1:L/2+1);
+P1(2:end-1) = 2*P1(2:end-1);
 
+
+% plot it so you can determine the frequencies to filter
+figure;
+plot(f,P1);
+title('Fourier of Signal')
+
+%% THIS IS WHERE PAT IS STUCK! 
 fltr=fftSig.*0; % create a masking vector of 1s and 0s
-lowBnd=1;
-highBnd=85;
-fltr(lowBnd:highBnd)=1; 
+% lowBnd=1;
+% highBnd=85;
+% fltr(lowBnd:highBnd)=1; 
 
-%figure;
-%plot(abs(fftSig)); % visualization of the freq. distribution
-% title('FFT of input signal');
-% xlabel('Frequency');
+highF = 0.2; % frequency (Hz); 
+
+
 
 
 fltSig=fftSig.*fltr; % apply the filter to the signal
@@ -72,9 +82,9 @@ x=1:length(sig);
 %% Plot filtered and original signal
 
 figure;
-plot(x,sig,'r',x,reconstrOut,'b'); 
+plot(time(1:L),sig,'r',time(1:L),reconstrOut,'b'); 
 title('FFT filtered, original signals');
-xlabel('Samples');
+xlabel('Time (min)');
 legend('Original','Filtered');
 
 %% Calculate slope of filtered signal
@@ -83,7 +93,7 @@ legend('Original','Filtered');
 slopes=zeros(size(tm));
 
 for i=1:(L-1)
-slopes(i,2)=5*(reconstrOut(i+1,1)-reconstrOut(i,1))/(time(i+1)-time(i));
+slopes(i,2)=1*(reconstrOut(i+1,1)-reconstrOut(i,1))/(time(i+1)-time(i));
 % the 50 is a multiplier used to bring the slope graph to a similar
 % magnitude as the signals
 end
@@ -132,6 +142,6 @@ title('Signal with Overlaid Thresholds');
 disp(thres_orig(1));
 
 %% Output to Excel
-savepath = '/Users/Patricia/Documents/Rice/7th Semester/Senior Design/';
+%savepath = '/Users/Patricia/Documents/Rice/7th Semester/Senior Design/';
 
-xlswrite(strcat(savepath,'UC_Data_',entry),[time(1:L)' reconstrOut tm(1:L,2)]);
+%xlswrite(strcat(savepath,'UC_Data_',entry),[time(1:L)' reconstrOut tm(1:L,2)]);
