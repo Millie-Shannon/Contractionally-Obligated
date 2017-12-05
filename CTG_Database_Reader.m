@@ -24,7 +24,7 @@ addpath('/Users/Patricia/Documents/MATLAB/mcode'); % Patricia's path
 %% Get signal from database
 
 % define entry to analyze
-entry='1003';
+entry='1001';
 
 % Read the signal from the website using the rdsamp function. 
 [tm,Fs]=rdsamp(strcat('ctu-uhb-ctgdb/',entry,'.dat')); % The rdsamp function has the website 'https://physionet.org/physiobank/database/' embedded within it.  You have to provide the rest of the website information for the database and file you want.
@@ -44,26 +44,31 @@ L=size(tm,1); % length of signal
 sig=tm(1:L,2); % set sig as only the 2nd column, the UC data
 
 fftSig=(fft(sig)); % fourier of signal
+
+% Method 1 - online
 f = Fs * (0:(L/2))/L; % frequency domain captured in fft 
 P2 = abs(fftSig/L); % amplitude spectrum (???)
 P1 = P2(1:L/2+1);
 P1(2:end-1) = 2*P1(2:end-1);
 
-
-% plot it so you can determine the frequencies to filter
 figure;
 plot(f,P1);
-title('Fourier of Signal')
+title('Fourier of Signal - Online Method')
 
-%% THIS IS WHERE PAT IS STUCK! 
+
+% Method 2 - pat
+f2 = Fs*(0:L-1)/(2*L); % frequency domain; same length as signal
+figure;
+plot(f2,abs(fftSig));
+title('Fourier of Signal - Same Length')
+
 fltr=fftSig.*0; % create a masking vector of 1s and 0s
-% lowBnd=1;
-% highBnd=85;
-% fltr(lowBnd:highBnd)=1; 
 
-highF = 0.2; % frequency (Hz); 
-
-
+lowBnd = 0.005; 
+highBnd = 0.025; % frequency (Hz); 
+index_lo = find(f2 == lowBnd);
+index_hi = find(f2 == highBnd);
+fltr(index_lo:index_hi) = 1;
 
 
 fltSig=fftSig.*fltr; % apply the filter to the signal
@@ -105,16 +110,18 @@ end
 thres=zeros(1,L);
 window=10; % time window in minutes
 
+% time=0:1/Fs:(length(tm)-1)/Fs *** REMINDER! ea. sample is spaced as such
+
 % calculate threshold via moving average 
 for i=1:L 
-    if i<=window*60
+    if i<=window*60*Fs
         slopeMax=max(slopes(1:i,2));
         slopeMin=min(slopes(1:i,2));
         range=slopeMax-slopeMin;
         thres(i)=slopeMin+0.63*range;
     else
-        slopeMax=max(slopes((i-window*60):i,2));
-        slopeMin=min(slopes((i-window*60):i,2));
+        slopeMax=max(slopes((i-window*60*Fs):i,2));
+        slopeMin=min(slopes((i-window*60*Fs):i,2));
         range=slopeMax-slopeMin;
         thres(i)=slopeMin+0.63*range;
     end
@@ -135,13 +142,47 @@ plot(time(1:L),reconstrOut,'k');
 plot(time(1:L),slopes(1:L,2),'b');xlabel('Time (min)');ylabel('Signal Slope');
 plot(time(1:L),thres,'m');
 plot(time(1:L),thres_orig,'g');
-hold off;
+%hold off;
 legend('Raw','Filt. Sig','Filt. Slopes','Thres Moving','Thres Orig');
 title('Signal with Overlaid Thresholds');
 
-disp(thres_orig(1));
+%% Peak Counting
+count = [];
+ind = 1;
+k = 1;
+
+while k < length(slopes)
+    % if you are above the threshold...
+    if slopes(k,2) > thres_orig(1)
+        count(ind,1) = k;  % save the index of 1st crossover point
+        add = 1;
+        while slopes(k+add,2) > thres_orig(1) %keep adding to index until you're under thresh
+            add = add + 1;
+        end
+        count(ind,2) = k + add; % save that 2nd crossover point
+        ind = ind + 1;
+        k = k+ add;
+    else
+        % if you aren't above the threshold, just keep advancing your index
+        k = k + 1;
+    end
+    
+    
+end
+
+tot_contr = length(count);
+disp('Our contraction count:');
+disp(tot_contr);
+
+% plot the found points
+y_contr = ones(1,tot_contr).*thres_orig(1);
+plot(time(count(:,1)),y_contr,'rx');
+hold off;
+
 
 %% Output to Excel
-%savepath = '/Users/Patricia/Documents/Rice/7th Semester/Senior Design/';
+savepath = '/Users/Patricia/Documents/Rice/7th Semester/Senior Design/';
 
-%xlswrite(strcat(savepath,'UC_Data_',entry),[time(1:L)' reconstrOut tm(1:L,2)]);
+xlswrite(strcat(savepath,'UC_Data_',entry),[time(1:L)' reconstrOut tm(1:L,2)]);
+%xlswrite(strcat(savepath,'f1_',entry),f');
+%xlswrite(strcat(savepath,'f2_',entry),f2');
