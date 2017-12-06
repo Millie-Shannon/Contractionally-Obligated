@@ -56,7 +56,7 @@ plot(f,P1);
 title('Fourier of Signal - Online Method')
 
 
-% Method 2 - pat
+% Method 2 - pat and aniket
 f2 = Fs*(0:L-1)/(2*L); % frequency domain; same length as signal
 figure;
 plot(f2,abs(fftSig));
@@ -64,11 +64,18 @@ title('Fourier of Signal - Same Length')
 
 fltr=fftSig.*0; % create a masking vector of 1s and 0s
 
-lowBnd = 0.005; 
-highBnd = 0.025; % frequency (Hz); 
-index_lo = find(f2 == lowBnd);
-index_hi = find(f2 == highBnd);
-fltr(index_lo:index_hi) = 1;
+lowF=0.0005; % low cutoff frequency (Hz);
+highF = 0.025; % high cutoff frequency (Hz); 
+
+% Pat tried finding the index of the cutoff frequencies in the f2 vector
+% index_lo = find(f2 == lowF);
+% index_hi = find(f2 == highF);
+% fltr(index_lo:index_hi) = 1;
+
+% Aniket mapped frequency to sample index using f = Fs * (0:(L/2))/L or f = Fs*(0:L-1)/(2*L);
+array_cut_low=floor(1+(lowF/(Fs))*2*L)
+array_cut_high=ceil(1+(highF/(Fs))*2*L)
+fltr(array_cut_low:array_cut_high)=1;
 
 
 fltSig=fftSig.*fltr; % apply the filter to the signal
@@ -159,30 +166,45 @@ while k < length(slopes)
         while slopes(k+add,2) > thres_orig(1) %keep adding to index until you're under thresh
             add = add + 1;
         end
-        count(ind,2) = k + add; % save that 2nd crossover point
-        ind = ind + 1;
-        k = k+ add;
+        
+        % once you're below threshold, check to make sure peak isn't too
+        % close to previous one...
+        if ind > 1
+            hi = k+add
+            hi2 = count(ind-1,1)
+            time_dif = (k+add-count(ind-1,1))/Fs/60
+        else
+            time_dif = 2;
+        end
+        
+        if time_dif > 1 % only if the peak is further than 1 min apart
+            count(ind,2) = k + add; % save that 2nd crossover point
+            ind = ind + 1; % advance the index of your count matrix
+        end
+        
+        k = k+ add; % make sure to start from the (k+add)th sample next loop
+
+    % if you aren't above the threshold...
     else
-        % if you aren't above the threshold, just keep advancing your index
+        % just keep advancing your index
         k = k + 1;
     end
     
-    
 end
-
+count
 tot_contr = length(count);
 disp('Our contraction count:');
 disp(tot_contr);
 
 % plot the found points
 y_contr = ones(1,tot_contr).*thres_orig(1);
-plot(time(count(:,1)),y_contr,'rx');
+plot(time(count(:,1)),y_contr,'mx','LineWidth',12);
 hold off;
 
 
 %% Output to Excel
 savepath = '/Users/Patricia/Documents/Rice/7th Semester/Senior Design/';
 
-xlswrite(strcat(savepath,'UC_Data_',entry),[time(1:L)' reconstrOut tm(1:L,2)]);
+%xlswrite(strcat(savepath,'UC_Data_',entry),[time(1:L)' reconstrOut tm(1:L,2)]);
 %xlswrite(strcat(savepath,'f1_',entry),f');
 %xlswrite(strcat(savepath,'f2_',entry),f2');
