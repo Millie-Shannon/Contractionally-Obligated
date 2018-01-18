@@ -23,41 +23,41 @@ addpath('/Users/Patricia/Documents/MATLAB/mcode'); % Patricia's path
 
 %% Get signal from database
 
-% define entry to analyze
-entry='1002';
+% % define entry to analyze
+% entry='1004';
+% 
+% % Read the signal from the website using the rdsamp function.
+% [tm,Fs]=rdsamp(strcat('ctu-uhb-ctgdb/',entry,'.dat')); % The rdsamp function has the website 'https://physionet.org/physiobank/database/' embedded within it.  You have to provide the rest of the website information for the database and file you want.
+% time=0:1/Fs:(length(tm)-1)/Fs; % According to the website, the data was sampled at 4 Hz
+% time = time./60; % convert from seconds to minutes
+% 
+% % Plot the raw signal.  The signal contains both FHR and UC traces.  The first is FHR, the second is UC
+% figure;plot(time,tm(:,2));xlabel('Time (min)');ylabel('UC (arb. units)'); title('Raw Signal'); % Since the amplitude of the toco is meaningless, I put the y-axis as 'arbitrary units'.
 
-% Read the signal from the website using the rdsamp function. 
-[tm,Fs]=rdsamp(strcat('ctu-uhb-ctgdb/',entry,'.dat')); % The rdsamp function has the website 'https://physionet.org/physiobank/database/' embedded within it.  You have to provide the rest of the website information for the database and file you want.
-time=0:1/Fs:(length(tm)-1)/Fs; % According to the website, the data was sampled at 4 Hz
-time = time./60; % convert from seconds to minutes
-
-% Plot the raw signal.  The signal contains both FHR and UC traces.  The first is FHR, the second is UC
-figure;plot(time,tm(:,2));xlabel('Time (min)');ylabel('UC (arb. units)'); title('Raw Signal'); % Since the amplitude of the toco is meaningless, I put the y-axis as 'arbitrary units'.
-
-% Plot a shorter section of the UC trace to allow for better visibility
-figure;plot(time(1:3000),tm(1:3000,2));xlabel('Time (min)');ylabel('UC (arb. units)'); title('Raw Signal (small)');
-
-L=size(tm,1); % length of signal
-sig=tm(1:L,2); % set sig as only the 2nd column, the UC data
-
+% % Plot a shorter section of the UC trace to allow for better visibility
+% figure;plot(time(1:3000),tm(1:3000,2));xlabel('Time (min)');ylabel('UC (arb. units)'); title('Raw Signal (small)');
+% 
+% L=size(tm,1); % length of signal
+% sig=tm(1:L,2); % set sig as only the 2nd column, the UC data
+% 
 %% Get signal from excel - Optoco Data
 
-% % select folder where excel file is located
-% [fname, pname] = uigetfile('*.*','MultiSelect', 'on','Choose spreadsheet for analysis');
-% 
-% % read in both columns 
-% time = xlsread(strcat(pname,fname), 'A:A');
-% time = time/60; % convert to minutes
-% sig = xlsread(strcat(pname,fname), 'B:B');
-% L=size(sig,1); % length of signal
-% 
-% % write in Optoco's sampling frequency
-% Fs = 1000;
-% 
-% % display raw signal
-% figure;
-% hold on;
-% plot(time,sig);xlabel('Time (min)');ylabel('UC (arb. units)'); title('Optoco Raw Signal');
+% select folder where excel file is located
+[fname, pname] = uigetfile('*.*','MultiSelect', 'on','Choose spreadsheet for analysis');
+
+% read in both columns 
+time = xlsread(strcat(pname,fname), 'A:A');
+%time = time/60; % convert to minutes
+sig = xlsread(strcat(pname,fname), 'C:C');
+L=size(sig,1); % length of signal
+
+% write in Optoco's sampling frequency
+Fs = 4;
+
+% display raw signal
+figure;
+hold on;
+plot(time,sig);xlabel('Time (min)');ylabel('UC (arb. units)'); title('Optoco Raw Signal');
 
 %% Filter - Band pass
 
@@ -116,9 +116,6 @@ plot(time(1:L),sig,'r',time(1:L),reconstrOut,'b');
 title('FFT filtered, original signals');
 xlabel('Time (min)');
 legend('Original','Filtered');
-
-
-%% Smoothing via Moving average (let's try it)
 
 
 %% Calculate slope of filtered signal
@@ -182,42 +179,43 @@ title('Signal with Overlaid Thresholds');
 count = []; % this is a #contractions x 2 matrix with the index of the slopes vector on the up and down crossing of the threshold
 ind = 1; % this index keeps track of the row in the count matrix
 k = 1; % this k allows us to step through each point in slopes vector
-t = 1; % this is the acceptabe time spacing between peaks in minutes 
+t = 0.7; % this is the acceptabe time between end of last and start of another contraction in minutes 
 
 
 while k < length(slopes) % perform the following on all pts in slopes vector
     
     % if you are above the threshold...
-    if slopes(k,2) > thres_orig(1)
+    if slopes(k,2) > thres_orig(1)%thres(k)
+        
         
         % determine when you cross the threshold on the way down -- MAY NOT
         % BE NECESSARY!
         add = 1; % define an "add" term that will keep track of index
-        while slopes(k+add,2) > thres_orig(1) %keep adding to index until you're under thresh
+        while slopes(k+add,2) > thres_orig(1) %thres(k+add) && (k+add)<L %keep adding to index until you're under thresh
             add = add + 1;
         end
         
         % determine start TIME
-        chg = 1 % index changer 
-        while slopes(k-chg,2) > 0
-            chg = chg + 1;
+        chg = 1; % index changer 
+        while slopes(k-chg,2) > 0 
+            chg = chg + 1; % keep moving back in slopes vector until you reach a negative slope value
         end
         
-        stime = (k - chg)/Fs/60 % start point of UC in minutes
+        stime = (k - chg); % start point of UC (index not minutes)
         
         % determine end TIME
         chg = 1;
         while slopes(k+chg,2) > 0
-            chg = chg + 1;
+            chg = chg + 1;  % keep moving forward in slopes vector until you reach a negative slope value
         end
-        etime = (k + chg)/Fs/60 % end point of UC in minutes
+        etime = (k + chg); % end point of UC (index not minutes)
         
         
         % once you're below threshold, check to make sure peak isn't too
         % close to previous one...
         if ind > 1
-            time_dif = (k-count(ind-1,2))/Fs/60; 
-            % index of detected peak - index of end of previous counted peak
+            time_dif = (k-count(ind-1,1))/Fs/60; 
+            % index of detected peak - index of start of previous counted peak
             % converted to seconds (/Fs) then minutes (/60)
         else
             time_dif = t+1; % if this is the first detected peak, allow it to count! 
@@ -244,17 +242,21 @@ while k < length(slopes) % perform the following on all pts in slopes vector
     
 end
 
+% determine duration of each contraction
+count(:,5) = count(:,4)/Fs/60 - count(:,3)/Fs/60; % minutes
+
 count
 tot_contr = length(count);
 disp('Our contraction count:');
 disp(tot_contr);
 
 % plot the found points
-y_contr = ones(1,tot_contr).*thres_orig(1);
+y_contr = ones(1,tot_contr).*thres_orig(1); %thres(count(:,1));
 plot(time(count(:,1)),y_contr,'mx','LineWidth',12);
-hold off;
 
-%% Determine duration of each contraction
+y_contr2 = zeros(1,tot_contr); % set the amplitude of the end point to the DL
+plot(time(count(:,4)),y_contr2,'yx','LineWidth',12);
+hold off;
 
 %% Produce Figures (if needed)
 % Use the following to produce figures for presentations/papers
