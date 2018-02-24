@@ -47,8 +47,7 @@ void loop() {
   Serial.println("1/4");
   delay(randNumber_dur_time);
   Serial.println("Half way there!");
-  delay(randNumber_dur_time);
-  Serial.println("3/4");
+
   digitalWrite(air_in, LOW); //turn off the LED indicating air should enter ball
   digitalWrite(air_out, HIGH); //turn on the LED indicating air should leave ball
   //Solenoid States - Deflate
@@ -56,7 +55,8 @@ void loop() {
   digitalWrite(sol_3, HIGH); //opens solenoid3 to allow pump to pull air from ball
   digitalWrite(sol_2, LOW); //closes solenoid 2 - cannot put more air in ball
   digitalWrite(sol_4, LOW); //closes solenoid4 - cannot pull more air from outside
-  
+    delay(randNumber_dur_time);
+  Serial.println("3/4");
   delay(randNumber_dur_time);
   digitalWrite(air_out, LOW); //turn off the LED indicating air should leave ball
   digitalWrite(motor, LOW); //end of contraction - turns motor off until next contraction
@@ -71,7 +71,7 @@ void loop() {
   }*/
 //FREQUENCY (break b/n contractions)
   randNumber_freq = random(50, 90); //generate random number from 50 to 90; under 60 is dangerous
- // randNumber_freq = random(15, 29); //generate random number from 5 to 9 for troubleshooting efficiency
+  //randNumber_freq = random(15, 30); //generate random number from 5 to 9 for troubleshooting efficiency
   randNumber_freq_time = (randNumber_freq * 1000) / 4;
   Serial.print("frequency = "); Serial.println(randNumber_freq); //change delay time into milliseconds
   //break up delay time into durations short enough to be readable
