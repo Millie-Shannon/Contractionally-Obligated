@@ -1,0 +1,29 @@
+int analogPin = 3;     // potentiometer wiper (middle terminal) connected to analog pin 3
+int val = 0;           // variable to store the value read
+
+
+unsigned long last_time = 0L;
+int PERIOD = 250; // period in ms for 4Hz sampling frequency
+
+void setup()
+{
+  Serial.begin(9600);              //  setup serial
+}
+
+void loop()
+{
+  //if (Serial.available() > 0) {
+    //Serial.println("HI! serial IS available");
+    if (millis() - last_time > PERIOD) {
+      //Serial.println("Hello sampl. loop entered.");
+      last_time = millis();
+      val = analogRead(analogPin);     // read the input pin
+        //Serial.print(250);          // freeze upper limit
+        //Serial.print(" ");
+        //Serial.print(225);           // freeze lower limit
+        //Serial.print(" ");
+      Serial.println(val);             // print out value
+    }
+  //}
+
+}
