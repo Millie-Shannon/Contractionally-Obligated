@@ -1,0 +1,1028 @@
+/*description of variables
+   val:                       used to receive data via Serial communication
+   Fs:                        sampling freq
+   moving_avg_window:         number of samples to be used in smoothing signal via moving average
+   BT_calculation_window:     minutes of data used to calculate basal tone (on first pass)
+   thres:                     detection level for signal
+   min_contr_length:          length(sec) of shortest allowable contraction
+   max_contr_length:          length(sec) of longest allowable contraction
+   max_iter:                  max number of times while loop for BT recalculation will iterate
+   moving_window_index:       counter used in moving average calculation
+   sig_moving_avg_index:      keeps track of number of samples that have been collected
+   max_num_contr:             artifically-imposed limit on max number of contractions that will be collected; used to
+                              restrict array sizes
+   num_samples:               number of samples that are within current calculation arrays (i.e. sig_moving_avg, basal_tone, etc.)
+   num_bins:                  placeholder variable that is eventually assigned number of bins in histogram from hist_calc func
+   max_BT_recalc_num_samples: length(min) of max window in BT recalculation (secondary passes)
+   compl_contr:               keeps track of number of contractions completed in count_new 2d array
+
+   count:                     stores start/stop indicies (in samples) of ALL contractions that occurred during data collection
+   count_prev:                array of start/stop indices of contractions in BT recalc window from previous iteration of loop;
+                              this is compared with the count_new array to determine when to add entries to count array
+   moving_avg:                small array with most recent raw signal values (used in moving averaging of func.)
+   sig_moving_avg:            stores smoothed (via moving avg) raw signal within BT recalc window
+   sig_moving_avg_no_offset:  smoothed raw signal with BT removed; this array seems corrupted and the test array
+                              is used in its place
+   basal_tone:                stores basal tone (adjusted multiple times, if necessary), within BT recalc window
+
+   test:                      correct, uncorrupted version of array with smoothed raw signal w/BT removed
+*/
+// add libraries
+#include <SPI.h>          // f.k. for Arduino-1.5.2
+#include <TimerFreeTone.h>
+#include "Adafruit_GFX.h"// Hardware-specific library
+#include <MCUFRIEND_kbv.h>
+MCUFRIEND_kbv tft;
+
+// SETUP FOR CONTRACTION DETECTION
+float val = 0;
+int Fs = 4;
+const uint16_t moving_avg_window = 10;
+int BT_calculation_window = 1;
+int thres = 30;
+int base_thres = 10;
+int min_contr_length = 10;
+int max_contr_length = 60;
+int max_iter = 15;
+int moving_window_index = 0;
+int sig_moving_avg_index = 0;
+const int max_num_contr = 100;
+int num_samples;
+int num_bins;
+const uint16_t max_BT_recalc_num_samples = 720;
+int compl_contr = 0;
+int tail_end = 0;
+float curr_raw_val, filtered_curr_val;
+
+const uint16_t max_stored = 1200; //20 min worth of samples if you only keep every 4th point
+int stored_ind = 0; //analagous to sig_moving_avg_index for stored signal vector; each sample has one from 1 to infinity
+double stored_sig[max_stored]; // stored signal HERE
+
+int count[100][2];
+int count_prev[100][2];
+int gain = 10;
+
+float dur[max_num_contr]; //18 10-min segments in 3 hour block
+int freq[max_num_contr];
+float dur_temp;
+int meh;
+int tot_c_10;
+int dur_ind = 0;
+
+double moving_avg[moving_avg_window];
+double sig_moving_avg[max_BT_recalc_num_samples];
+double sig_moving_avg_no_offset[max_BT_recalc_num_samples];
+double basal_tone[max_BT_recalc_num_samples];
+
+double test[max_BT_recalc_num_samples];
+
+unsigned long last_time = 0L;
+unsigned long start_time = 0L;
+unsigned long end_time = 0L;
+unsigned long alarm_time = 0L;
+int PERIOD = 250;
+
+// SETUP FOR GUI
+// Assign human-readable names to some common 16-bit color values:
+#define TONE_PIN   44
+#define LTBLUE    0xB6DF
+#define LTTEAL    0xBF5F
+#define LTGREEN   0xBFF7
+#define LTCYAN    0xC7FF
+#define LTRED     0xFD34
+#define LTMAGENTA 0xFD5F
+#define LTYELLOW  0xFFF8
+#define LTORANGE  0xFE73
+#define LTPINK    0xFDDF
+#define LTPURPLE  0xCCFF
+#define LTGREY    0xE71C
+
+#define BLUE      0x001F
+#define TEAL      0x0438
+#define GREEN     0x07E0
+#define CYAN      0x07FF
+#define RED       0xF800
+#define MAGENTA   0xF81F
+#define YELLOW    0xFFE0
+#define ORANGE    0xFC00
+#define PINK      0xF81F
+#define PURPLE    0x8010
+#define GREY      0xC618
+#define WHITE     0xFFFF
+#define BLACK     0x0000
+
+#define DKBLUE    0x000D
+#define DKTEAL    0x020C
+#define DKGREEN   0x03E0
+#define DKCYAN    0x03EF
+#define DKRED     0x6000
+#define DKMAGENTA 0x8008
+#define DKYELLOW  0x8400
+#define DKORANGE  0x8200
+#define DKPINK    0x9009
+#define DKPURPLE  0x4010
+#define DKGREY    0x4A49
+
+#define NOTE_C4  262
+#define NOTE_G3  196
+#define NOTE_A3  220
+#define NOTE_B3  247
+#define NOTE_01  280
+
+int melody[] = {
+  NOTE_C4, NOTE_C4, NOTE_C4, 0, NOTE_G3, 0, NOTE_B3, NOTE_C4
+};
+
+int melody2[] = {
+  0, 0, 0, 0
+};
+
+// note durations: 4 = quarter note, 8 = eighth note, etc.:
+int noteDurations[] = {
+  2, 8, 4, 1, 4, 4, 4, 4
+};
+
+//boolean display1 = true;
+double ox , oy ;
+
+int x = 10;
+
+int button1;
+int button2;
+int button3;
+int button4;
+int time1 = 0;
+int time2 = 10;
+int tmax = 10;
+int state = 3; // default state is 3
+int state2 = 1; // state2 defines if alarm is on/off
+double y;
+int p = 1;
+
+int current_freq;
+int current_dur;
+int dur_freq_ind = 0; // this is an index to call elements in freq and dur vectors;
+
+int iter = 0;
+int barray[2];
+int greenLEDPin = 41;
+int redLEDPin = 39;
+int screen_clear = 0;
+boolean redraw;
+bool alarm_on = false;
+
+uint16_t g_identifier;
+
+
+void setup()
+{
+  Serial.begin(19200);
+  //    Serial.println('a');
+  //  char a = 'b';
+  //    while (a != 'a')
+  //    {
+  //      a = Serial.read();
+  //    }
+
+
+  //Serial.begin(9600);
+  Serial.println(F("TFT LCD test"));
+  pinMode(greenLEDPin, OUTPUT);
+  pinMode(redLEDPin, OUTPUT);
+  tft.reset();
+
+  uint16_t identifier = tft.readID();
+  if (identifier == 0x9325) {
+    Serial.println(F("Found ILI9325 LCD driver"));
+  } else if (identifier == 0x9328) {
+    Serial.println(F("Found ILI9328 LCD driver"));
+  } else if (identifier == 0x4535) {
+    Serial.println(F("Found LGDP4535 LCD driver"));
+  } else if (identifier == 0x7575) {
+    Serial.println(F("Found HX8347G LCD driver"));
+  } else if (identifier == 0x9341) {
+    Serial.println(F("Found ILI9341 LCD driver"));
+  } else if (identifier == 0x7783) {
+    Serial.println(F("Found ST7781 LCD driver"));
+  } else if (identifier == 0x8230) {
+    Serial.println(F("Found UC8230 LCD driver"));
+  }
+  else if (identifier == 0x8357) {
+    Serial.println(F("Found HX8357D LCD driver"));
+  } else if (identifier == 0x0101)
+  {
+    identifier = 0x9341;
+    Serial.println(F("Found 0x9341 LCD driver"));
+  } else if (identifier == 0x9481)
+  {
+    Serial.println(F("Found 0x9481 LCD driver"));
+  }
+  else if (identifier == 0x9486)
+  {
+    Serial.println(F("Found 0x9486 LCD driver"));
+  }
+  else {
+    Serial.print(F("Unknown LCD driver chip: "));
+    Serial.println(identifier, HEX);
+    Serial.println(F("If using the Adafruit 2.8\" TFT Arduino shield, the line:"));
+    Serial.println(F("  #define USE_ADAFRUIT_SHIELD_PINOUT"));
+    Serial.println(F("should appear in the library header (Adafruit_TFT.h)."));
+    Serial.println(F("If using the breakout board, it should NOT be #defined!"));
+    Serial.println(F("Also if using the breakout, double-check that all wiring"));
+    Serial.println(F("matches the tutorial."));
+    identifier = 0x9486;
+
+  }
+
+  tft.begin(identifier);
+  //  Serial.print("TFT size is "); Serial.print(tft.width()); Serial.print("x"); Serial.println(tft.height());
+  tft.fillScreen(BLACK);
+} //END OF SETUP
+
+#if defined(MCUFRIEND_KBV_H_)
+uint16_t scrollbuf[320];    // my biggest screen is 320x480
+#define READGRAM(x, y, buf, w, h)  tft.readGRAM(x, y, buf, w, h)
+#else
+uint16_t scrollbuf[320];    // Adafruit only does 240x320
+// Adafruit can read a block by one pixel at a time
+int16_t  READGRAM(int16_t x, int16_t y, uint16_t *block, int16_t w, int16_t h)
+{
+  uint16_t *p;
+  for (int row = 0; row < h; row++) {
+    p = block + row * w;
+    for (int col = 0; col < w; col++) {
+      *p++ = tft.readPixel(x + col, y + row);
+    }
+  }
+}
+#endif
+
+
+void loop() {
+  // check if "copy data from serial monitor" button is presssed...
+  //  if (analogRead(0) == 1023) {
+  //    delay(30000);
+  //    Serial.println("Starting a new dataset! Time = 0;");
+  //  }
+  //
+  if (millis() - last_time > PERIOD) {
+    // update last_time w/ current time
+    last_time = millis();
+    start_time = millis();
+    //   if(Serial.available() > 0){
+    //
+    //    //moving average of incoming input, with averaging window of length moving_avg_window
+    //    val = analogRead(3);
+    //    //clear input Serial buffer (completes reading of any input before proceeding further in code)
+    curr_raw_val = (float) analogRead(7) * gain;
+    if (sig_moving_avg_index == 0 || sig_moving_avg_index == 1) {
+      filtered_curr_val = curr_raw_val;
+    }
+    //1/30 Hz low-pass filter (20 contractions/10 minutes)
+    //filtered_curr_val = 0.949 * filtered_curr_val + 0.05101 * curr_raw_val;
+
+    //1/45 Hz low-pass filter (13.3 contractions/10 minutes)
+    filtered_curr_val = 0.9657 * filtered_curr_val + 0.0343 * curr_raw_val;
+
+    val = filtered_curr_val;
+
+    //initialize values of count array (keeps track of all contractions during collection) on 1st iteration
+    if (sig_moving_avg_index == 0) {
+      for (int i = 0; i < max_num_contr; i++) {
+        count[i][0] = 0;
+        count[i][1] = 0;
+      }
+    }
+
+    //STEP 1: calculate moving avg from appropriate number of data points
+    moving_avg[moving_window_index % moving_avg_window] = val;
+    float total = 0;
+    if (moving_window_index < moving_avg_window) {
+      for (int i = 0; i <= moving_window_index; i++) {
+        total = total + moving_avg[i];
+      }
+      total = total / (moving_window_index + 1);
+    }
+    else {
+      for (int i = 0; i < moving_avg_window; i++) {
+        total = total + moving_avg[i];
+      }
+      total = total / moving_avg_window;
+    }
+    //assume moving avg value to the sig_moving_avg array
+    if (sig_moving_avg_index >= max_BT_recalc_num_samples) {
+      for (int i = 1; i < max_BT_recalc_num_samples; i++) {
+        sig_moving_avg[i - 1] = sig_moving_avg[i];
+      }
+      sig_moving_avg[max_BT_recalc_num_samples - 1] = total;
+    }
+    else {
+      sig_moving_avg[sig_moving_avg_index] = total;
+    }
+
+
+    //STEP 2: first-pass basal tone calculation and removal
+    num_samples = 2.5 * Fs * 60;
+    if (sig_moving_avg_index < 2.5 * Fs * 60) {
+      num_samples = sig_moving_avg_index;
+    }
+
+    int num_samples_2 = 0.4 * Fs * 60;
+    if (sig_moving_avg_index < num_samples_2) {
+      num_samples_2 = sig_moving_avg_index;
+    }
+
+    //temp: array of most recent data points within BT_calculation_window interval
+    double temp [num_samples_2];
+    if (sig_moving_avg_index >= max_BT_recalc_num_samples) {
+      for (int i = 0; i < num_samples_2; i++) {
+        temp[i] = sig_moving_avg[max_BT_recalc_num_samples - i]; //flips signal vector to have most recent before old
+      }
+    }
+    else {
+      for (int i = 0; i < num_samples_2; i++) {
+        temp[i] = sig_moving_avg[sig_moving_avg_index - i]; //flips signal vector to have most recent before old
+      }
+    }
+
+    double bin[1000];//arbitrarily initialize bin array to something larger than the bin array would have to
+    //be in histogram calculations
+    num_bins = hist_calc(bin, temp, num_samples_2);//hist_calc function returns bin (see func for more explanation)
+    int sum = 0;
+    int min_in_window = num_bins - 1000;
+    //find value of temp that is 10th percentile of all values
+    while (min_in_window < num_bins && sum < round((num_samples_2 / 5) )) {
+      sum = sum + bin[min_in_window + 1000 - num_bins];
+      min_in_window = min_in_window + 1;
+    }
+    //assign appropriate values to corresponding arrays
+    if (sig_moving_avg_index >= max_BT_recalc_num_samples) {
+      for (int i = 1; i < max_BT_recalc_num_samples; i++) {
+        basal_tone[i - 1] = basal_tone[i];
+        sig_moving_avg_no_offset[i - 1] = sig_moving_avg_no_offset[i];
+        test[i - 1] = test[i];
+      }
+      basal_tone[max_BT_recalc_num_samples - 1] = min_in_window;
+      sig_moving_avg_no_offset[max_BT_recalc_num_samples - 1] = sig_moving_avg[max_BT_recalc_num_samples - 1] - min_in_window;
+      test[max_BT_recalc_num_samples - 1] = sig_moving_avg[max_BT_recalc_num_samples - 1] - min_in_window;
+    }
+    else {
+      basal_tone[sig_moving_avg_index] = min_in_window;
+      sig_moving_avg_no_offset[sig_moving_avg_index] = sig_moving_avg[sig_moving_avg_index] - min_in_window;
+      test[sig_moving_avg_index] = sig_moving_avg[sig_moving_avg_index] - min_in_window;
+    }
+
+    //    // STEP 2.5: Failsafe
+    //    if (sig_moving_avg_index > 15) {
+    //      bool flatline = 1;
+    //      for (int i = 10; i < num_samples; i++) {
+    //        if (temp[i] > 0) {
+    //          flatline = 0;
+    //          break;
+    //        }
+    //      }
+    //      if (flatline) {
+    //        Serial.println("DEVICE IS DISCONNECTED!");
+    //      }
+    //    }
+
+    //STEP 3: Peak Counting
+    int num_changes = 1;
+    int iter = 1;
+
+    //count_new array will keep track of contractions within BT recalc window
+    int count_new [max_num_contr][2];
+    for (int i = 0; i < max_num_contr; i++) {
+      count_new[i][0] = 0;
+      count_new[i][1] = 0;
+    }
+
+    //find indices at which contractions cross threshold
+    while (num_changes != 0 && iter <= max_iter) {
+      int ind = 0;
+      int c = 0;
+      while (c < num_samples) {
+        if (test[c] > thres) {
+          count_new [ind][0] = c;
+          int add = 1;
+          while ((c + add) < num_samples && test[c + add] > thres) {
+            add = add + 1;
+          }
+          int time_dif;
+          if (ind > 0) {
+            time_dif = (c + add - count_new[ind - 1][1]) ;
+          }
+          else {
+            time_dif = 2 * Fs * 60;
+          }
+          if (time_dif > 0.03 * 60 * Fs) {
+            count_new[ind][1] = c + add;
+            ind = ind + 1;
+          }
+          c = c + add;
+        }
+        else {
+          c = c + 1;
+        }
+      }
+
+      //find start, end indices of each contraction (relative to basal_tone, not threshold)
+      compl_contr = 0; // # of complete contractions; i.e. # of non zero rows in count_new array
+      while (count_new[compl_contr][0] != 0 && count_new[compl_contr][1] != 0) {
+        compl_contr++;
+      }
+
+      for (int i = 0; i < compl_contr; i++) { // for each COMPLETED contraction...
+        int k = count_new[i][0];
+        while (k > 0 && test[k] > base_thres) {
+          k--; //step back a sample until you reach a value of 0 but before you reach the end of samples
+        }
+        count_new[i][0] = k; // save that index as your new 1st crossover point
+        k = count_new[i][1]; // then move on to your end threshold crossover
+        int max_index = sig_moving_avg_index;
+        if (sig_moving_avg_index > max_BT_recalc_num_samples) {
+          max_index = max_BT_recalc_num_samples;
+        }
+        while (k < max_index && test[k] > base_thres) {
+          k++; //step forward a sample until you reach 0 and before you reach the last known sample
+        }
+        count_new[i][1] = k; // save that index as your new 2nd crossover point
+      }
+
+      //remove too short contractions (less than the min_contr_length)
+      int counts_filtered [max_num_contr][2];
+      for (int i = 0; i < max_num_contr; i++) {
+        counts_filtered[i][0] = 0;
+        counts_filtered[i][1] = 0;
+      }
+      int tmp = 0;
+      for (int i = 0; i < max_num_contr; i++) {
+        if ((count_new[i][1] - count_new[i][0]) >= Fs * min_contr_length) {
+          counts_filtered[tmp][0] = count_new[i][0];
+          counts_filtered[tmp][1] = count_new[i][1];
+          tmp = tmp + 1;
+        }
+      }
+      for (int i = 0; i < max_num_contr; i++) {
+        count_new[i][0] = counts_filtered[i][0];
+        count_new[i][1] = counts_filtered[i][1];
+      }
+
+      //STEP 4: redo BT calculations as needed
+      num_changes = 0;
+      for (int i = 0; i < max_num_contr; i++) {
+        //reset BT if original BT results in contractions that are above max_contr_length
+        if ((count_new[i][1] - count_new[i][0]) >= (max_contr_length * Fs)) {
+          num_changes = 5;
+          double temp [count_new[i][1] - count_new[i][0]];
+          for (int j = count_new[i][0]; j <= count_new[i][1]; j++) {
+            temp[j - count_new[i][0]] = test[j];
+          }
+
+          double bin[1000];//make sure that the size of this is appropriate
+          num_bins = hist_calc(bin, temp, (count_new[i][1] - count_new[i][0]));
+          int sum = 0;
+          int min_in_window = num_bins - 1000;
+          //iterate the BT based on while loop iteration, max number of iterations assigned
+          while (min_in_window < num_bins && sum < round(((count_new[i][1] - count_new[i][0]) * iter / max_iter) )) {
+            sum = sum + bin[min_in_window + 1000 - num_bins];
+            min_in_window = min_in_window + 1;
+          }
+          for (int j = count_new[i][0]; j <= count_new[i][1]; j++) {
+            test[j] = test[j] - (min_in_window - basal_tone[j]);
+            basal_tone[j] = basal_tone[j] + (min_in_window - basal_tone[j]);
+          }
+        }
+      }
+      iter = iter + 1;
+    }
+
+    //STEP 5: store contraction start/end indices
+    //initialize the count_prev array if on the 1st iteration
+    if (sig_moving_avg_index == 0) {
+      for (int i = 0; i < max_num_contr; i++) {
+        int curr1 = count_new[i][0];
+        int curr2 = count_new[i][1];
+        count_prev[i][0] = curr1;
+        count_prev[i][1] = curr2;
+      }
+    }
+
+    if (sig_moving_avg_index == 0) {
+      for (int i = 0; i < max_num_contr; i++) {
+        count_prev[i][0] = count_new[i][0];
+        count_prev[i][1] = count_new[i][1];
+      }
+    }
+    else {
+      for (int i = 0; i < max_num_contr; i++) {
+        for (int j = i; j < max_num_contr; j++) {
+          if (((count_prev[j][0] - count_new[i][0] == 1 && count_prev[j][1] - count_new[i][1] == 1) && count_new[i][0] == 1)) {
+            //when start, stop indices of contractions in count_prev and count_new are offset by 1, this loop is run.
+            //you wait until count_new[i][1] equals 1 because this allows the prospective contraction to traverse, through iterations
+            //over the entire BT recalc window so that all BT recalculations can occur as needed
+            int curr = 0;
+            //find first index of count array that doesn't contain a contraction
+            while (count[curr][0] != 0 && count[curr][1] != 0) {
+              curr++;
+            }
+
+            //only make a change to count if the prospective contraction has not already be added
+            int make_change = 1;
+            for (int k = 0; k < max_num_contr; k++) {
+              if (count_new[i][0] == count[k][0] || count_new[i][1] == count[k][1]) { // NOTE! This is not currently effective at catching duplicates! count is in absolute indices versus count_new is in "fluctuating indices"
+                make_change = 0;
+              }
+            }
+
+            // because you have a new contraction, clear the GUI screen
+            screen_clear = 1;
+
+            //assign contraction indices to count as needed
+            if (make_change == 1) {
+              if (sig_moving_avg_index >= max_BT_recalc_num_samples) {
+                count[curr][0] = count_new[i][0] + sig_moving_avg_index - max_BT_recalc_num_samples - 2;
+                count[curr][1] = count_new[i][1] + sig_moving_avg_index - max_BT_recalc_num_samples - 2;
+              }
+              else {
+                count[curr][0] = count_new[i][0];
+                count[curr][1] = count_new[i][1];
+              }
+
+              /* // PAT's BAD but commented dur!
+                // determine the average duration
+                dur_temp = 0;
+                meh = curr; // this is an index to step thru rows of count array
+                tot_c_10 = 0; // this keeps a running sum of your contractions
+                // while...
+                // 1) your meh'th contraction start time is at least ten minutes ago (+the lag caused by max_BT)
+                // 2) your meh'th contraction start time is at least BT_recalc_num_samples away from current time
+                // NOTE: Number 2 is redundant w/ earlier part of code; anything that is in count is past BT recalc period
+                // 3) also make sure your meh index is greater than 0 bc you will be subtracting from it on each loop
+                while ((sig_moving_avg_index - count[meh][0]) < (2400 + max_BT_recalc_num_samples) && (sig_moving_avg_index - count[meh][0]) > max_BT_recalc_num_samples && meh >= 0) {
+                dur_temp = dur_temp + (count[meh][1] - count[meh][0]);
+                tot_c_10++;
+                meh--;
+                }
+                dur[dur_ind] = dur_temp / tot_c_10 / 240; // change from sum to average duration in past ten minutes
+                freq[dur_ind] = tot_c_10;
+
+                //if time has moved past current 10-min segment, move on to new index in dur vector
+                if (sig_moving_avg_index % 2400 == max_BT_recalc_num_samples && sig_moving_avg_index != max_BT_recalc_num_samples) {
+                dur_ind++;
+                tmax = tmax + 10; // for GUI; in non showcase code your history only goes back up to your tmax;
+                }
+              */
+
+              //if time has moved past current 10-min segment, move on to new index in dur vector
+              int display_win = 2400;
+              if (sig_moving_avg_index > (display_win * (dur_ind + 1) + max_BT_recalc_num_samples)) {
+                dur_ind++;
+                tail_end = curr;
+                if (tail_end < 0) {
+                  tail_end = 0;
+                }
+              }
+              // determine the average duration
+              dur_temp = 0;
+              meh = curr;
+              tot_c_10 = 0;
+              while ((sig_moving_avg_index - count[meh][0]) < (display_win + max_BT_recalc_num_samples) && (sig_moving_avg_index - count[meh][0]) > max_BT_recalc_num_samples && meh >= tail_end) {
+                dur_temp = dur_temp + (count[meh][1] - count[meh][0]);
+                tot_c_10++;
+                meh--;
+              }
+              dur[dur_ind] = dur_temp / tot_c_10 / 240; // change from sum to average duration in past ten minutes
+              freq[dur_ind] = tot_c_10;
+
+
+            }
+            break;
+          }
+        }
+      }
+      //reassign the count_prev array after all appropriate additions to count have been made
+      for (int i = 0; i < max_num_contr; i++) {
+        int curr1 = count_new[i][0];
+        int curr2 = count_new[i][1];
+        count_prev[i][0] = curr1;
+        count_prev[i][1] = curr2;
+      }
+    }
+    Serial.println(sig_moving_avg_index);
+    Serial.print("\t");
+    Serial.print(curr_raw_val);
+    Serial.print("\t");
+    Serial.print(filtered_curr_val);
+    Serial.print("\t");
+    //send appropriate output via Serial communication
+    if (sig_moving_avg_index >= max_BT_recalc_num_samples) {
+      Serial.print(test[max_BT_recalc_num_samples - 1]);
+    }
+    else {
+      Serial.print(test[sig_moving_avg_index]);
+    }
+    Serial.print("\t");
+    if (sig_moving_avg_index >= max_BT_recalc_num_samples) {
+      Serial.print(basal_tone[max_BT_recalc_num_samples - 1]);
+    }
+    else {
+      Serial.print(basal_tone[sig_moving_avg_index]);
+    }
+    Serial.print("\t");
+
+    int counts_filtered [max_num_contr][2];
+    int counter = 0;
+
+
+    // QUICK and dirty way to rid of duplicates in count (wouldn't need this if we fix the "makechange" error above
+    for (int i = 0; i < max_num_contr; i++) {
+      counts_filtered[i][0] = 0;
+      counts_filtered[i][1] = 0;
+    }
+    for (int i = 0; i < max_num_contr; i++) {
+      int make_change = 1;
+      int loop_min = i - 2;
+      int loop_max = i + 2;
+      if (loop_min < 0) {
+        loop_min = 0;
+      }
+      if (loop_max >= max_num_contr) {
+        loop_max = max_num_contr - 1;
+      }
+      for (int j = loop_min; j < loop_max; j++) {
+        if (count[i][0] == counts_filtered[j][0] && count[i][1] == counts_filtered[j][1]) {
+          make_change = 0;
+        }
+      }
+      if (make_change == 1) {
+        counts_filtered[counter][0] = count[i][0];
+        counts_filtered[counter][1] = count[i][1];
+        counter = counter + 1;
+      }
+    }
+
+    for (int i = 0; i < max_num_contr; i++) {
+      count[i][0] = counts_filtered[i][0];
+      count[i][1] = counts_filtered[i][1];
+    }
+
+    //find first index of count array that doesn't contain a contraction
+    int curr = 0;
+    while (count[curr][0] != 0 && count[curr][1] != 0) {
+      curr++;
+    }
+    if (curr > 0) {
+      curr = curr - 1;
+    }
+
+
+    Serial.print(count[curr][0]);
+    Serial.print("\t");
+    Serial.print(count[curr][1]);
+    Serial.print("\t");
+    Serial.print(dur[dur_ind]);
+    Serial.print("\t");
+    Serial.print(freq[dur_ind]);
+    Serial.print("\t");
+
+
+
+    end_time = millis();
+    Serial.println(end_time - start_time);
+    Serial.println();
+
+
+    //Update Counters
+    sig_moving_avg_index = sig_moving_avg_index + 1;
+    moving_window_index = moving_window_index + 1;
+
+
+    // STEP 6: STORE SIGNAL FOR GUI
+    if (sig_moving_avg_index % 4 == 0) { // if it's fourth point, store for display!
+      stored_ind++;
+      if (stored_ind > max_stored) { // once you're past max number of samples that can be stored...
+        for (int i = 1; i < max_stored; i++) {
+          stored_sig[i - 1] = stored_sig[i];//shift everything back one index and forget your oldest pt.
+        }
+        stored_sig[max_stored - 1] = test[max_BT_recalc_num_samples]; //recall your latest signal pt is at index = max_BT(...)
+      }
+      else if (stored_ind < max_BT_recalc_num_samples) { // if you're w/in max_stored AND bt_recalc...
+        stored_sig[stored_ind] = test[sig_moving_avg_index - 1]; // your signal index is described by sig_moving_avg_index (subtract 1 bc you updated counters right before this!)
+      }
+      else { // if you're w/in max_stored but NOT w/in bt_recalc...
+        stored_sig[stored_ind] = test[max_BT_recalc_num_samples]; //your signal index is described by max_BT(...)
+      }
+    }
+
+
+
+    // STEP 7: Communicate DATA ON USER INTERFACE!!
+    uint8_t aspect;
+    uint16_t pixel;
+    char *aspectname[] = {
+      "PORTRAIT", "LANDSCAPE", "PORTRAIT_REV", "LANDSCAPE_REV"
+    };
+    char *colorname[] = { "BLUE", "GREEN", "RED", "GRAY" };
+    uint16_t colormask[] = { 0x001F, 0x07E0, 0xF800, 0xFFFF };
+    uint16_t dx, rgb, n, wid, ht;
+    tft.setRotation(0);
+
+    pinMode(51, INPUT);
+    digitalWrite(51, HIGH);
+    pinMode(53, INPUT);
+    digitalWrite(53, HIGH);
+    pinMode(45, INPUT);
+    digitalWrite(45, HIGH);
+    pinMode(37, INPUT);
+    digitalWrite(37, HIGH);
+
+    button1 = digitalRead(53); // scroll through history (+)
+    button2 = digitalRead(51); // scroll through history (-)
+    button3 = digitalRead(45); // screen switch
+    button4 = digitalRead(37); // mute
+
+    // STATE 3: Current State Screen
+    if (state == 3) {
+
+      // clears screen when you have new contraction values
+      if (screen_clear == 1) {
+        tft.fillScreen(BLACK);
+        screen_clear = 0;
+      }
+
+      // print current state information
+      tft.setRotation(3);
+      tft.setCursor(0, 0);
+      tft.setTextColor(WHITE);
+      tft.setTextSize(5);
+      tft.setTextWrap(true);
+      tft.println("Current State");
+      tft.println(" ");
+      tft.print("Frequency: ");
+      tft.println(freq[dur_ind]); //dur_ind is the index of the most recent freq value
+      //Serial.println(freq[dur_ind]);
+      tft.println(" ");
+      tft.print("Duration: ");
+      tft.print(dur[dur_ind]);
+    }
+
+    // STATE 0: HISTORY Screen
+    if (state == 0) {
+      // BUTTON 1: scroll forward in time
+      if (button1 == LOW) {
+        time1 = time1 + 10;
+        time2 = time2 + 10;
+        dur_freq_ind = dur_freq_ind + 1;
+        tft.fillScreen(BLACK);
+      }
+      //BUTTON 2: scroll backward in time
+      if (button2 == LOW && time1 != 0) {
+        tft.fillScreen(BLACK);
+        time1 = time1 - 10;
+        time2 = time2 - 10;
+        dur_freq_ind = dur_freq_ind - 1;
+      }
+
+      tft.setRotation(3);
+      tft.setCursor(0, 0);
+      tft.setTextColor(WHITE);
+      tft.setTextSize(4);
+      tft.setTextWrap(true);
+      tft.print("Time Elapsed: ");
+      tft.println(" ");
+      tft.print(time1);
+      tft.print(" - ");
+      tft.print(time2);
+      tft.println(" min.");
+      tft.println(" ");
+      tft.print("Frequency: ");
+      tft.println(freq[dur_freq_ind]);
+      tft.println(" ");
+      tft.print("Duration: ");
+      tft.print(dur[dur_freq_ind]);
+    } // end of STATE 0
+
+
+    // BUTTON 3: Set State
+    if (button3 == LOW) {
+      if (state == 0) { // if on history screen...
+        tft.fillScreen(BLACK);
+        state = 1; // set to graph screen...
+      } else if (state == 2) { // if on "do nothing state"...
+        tft.fillScreen(BLACK);
+        state = 3; //set to "current state" screen
+        redraw = true;
+      } else if (state == 3) { //if on "current state" screen...
+        tft.fillScreen(BLACK);
+        state = 0; // set to history screen
+      }
+    }
+
+    // BUTTON 4: Set State2 (mute/unmmute alarm)
+    if (button4 == LOW) {
+      if (state2 == 1) {
+        state2 = 0;
+      } else if (state2 == 0) {
+        state2 = 1;
+      }
+    }
+
+    // STATE 1: Plot Trace
+    if (state == 1 ) {
+      tft.fillScreen(BLACK);
+      tft.setRotation(3);
+
+      if (sig_moving_avg_index < 2400) { // if less than 10 min... only plot up to current time
+        state = 2;
+        for (int x = 0; x <= stored_ind; x++) {
+          y = stored_sig[x];
+          //       inputs, gx, gy, w,  h, xlo,xhi,xinc,ylo,yhi,yinc
+          Graph(tft, x, y, 0, 310, 470, 10000, 0, 600, 1, 0, 3000, 2, DKBLUE, RED, YELLOW, BLACK);
+        }
+      }
+
+
+      else {// if past 10 min... plot most recent 10 min
+        if (stored_ind > max_stored) { //after you pass max_stored number of samples, you can no longer use stored_ind as the index; the vector is being rewritten (most recent point is always last point)
+          for (int x = (max_stored - 600 * (p)); x <= (max_stored - 600 * (p - 1)); x++) {
+            y = stored_sig[x];
+            int x_g = x - max_stored - 600 * p; // make sure you plot x from 0 to 600 (samples in 10 min)
+            Graph(tft, x_g, y, 0, 310, 470, 305, 0, 120, 1, 0, 90, 2, DKBLUE, RED, YELLOW, BLACK);
+          }
+          p = 1; // reset your p value;
+        }
+        else { //if you are still within max_stored number of samples you are still adding to the end of the sig_stored vector
+          for (int x = (stored_ind - 600 * (p)); x <= (stored_ind - 600 * (p - 1)); x++) {
+            y = stored_sig[x];
+            int x_g = x - stored_ind - 600 * (p);
+            Graph(tft, x, y, 0, 310, 470, 305, 0, 120, 1, 0, 90, 2, DKBLUE, RED, YELLOW, BLACK);
+          }
+          p = 1; // reset your p value
+        }
+
+        // switch to state 2 to stop from continuously plotting
+        state = 2;
+      }
+    }
+
+
+    // STATE 2: allow for scrolling in graph
+    if (state == 2) {
+      if (sig_moving_avg_index > 2400) { // once you are past ten minutes...
+
+        // Button 1 : Go towards most recent time
+        if (button1 == LOW && p > 1) {
+          p = p - 1; // p determines how big the value you subtract from your current index; the smaller p is, the bigger your time stamp
+          state = 1;
+        }
+
+        //Button 2: Go futher in history
+        if (stored_ind > max_stored) { // if you are already at max capacity of stored signal...
+          if (button2 == LOW && ((p - 1) * 600) <= max_stored) { //if button is pressed AND you don't exceed max index of stored signal
+            p = p + 1; // increase your p; the larger p, the smaller your time stamp
+            state = 1;
+          }
+        }
+        else { //if you are not yet at max capacity of stored signal...
+          if (button2 == LOW && ((p - 1) * 600) <= stored_ind) { //if button is pressed AND you don't exceed your CURRENT index...
+            p = p + 1; // p determines how big the value you subtract from your current index; the larger p, the smaller your time stamp
+            state = 1;
+          }
+        }
+
+      }
+    }
+
+
+    // Check for dangerous ranges!
+    if (dur_ind > 2) { //only after you have 3 10-min averages stored in dur & freq vectors check for dangerous levels...
+      if (freq[dur_ind] > 6 || freq[dur_ind] < 3) {
+        if (freq[dur_ind - 1] > 6 || freq[dur_ind - 1] < 3) {
+          if (freq[dur_ind - 2] > 6 || freq[dur_ind - 2] < 3) {
+            // if frequency has been high or low for more than 30 minutes do the following...
+            digitalWrite(redLEDPin, HIGH); //turn ON red LED
+            digitalWrite(greenLEDPin, LOW); // turn OFF green LED
+
+            //set alarm boolean to true
+            alarm_on = true;
+          }
+        }
+      }
+    }
+    else { // if not dangerous...
+      digitalWrite(redLEDPin, LOW); //turn OFF red LED
+      digitalWrite(greenLEDPin, HIGH);
+    }
+
+
+
+
+  }
+
+  // in time between completion of one contraction detection loop and ...
+  // end of sample period -- sound alarm if needed
+  if (alarm_on == true) {
+    //alarm_on = false; // reset the alarm to OFF state
+    if (state2 == 1) { //if alarm is set unmuted, play tone!
+      int thisNote = 0;
+      while (thisNote < 4 && (millis() - last_time) < PERIOD) {
+
+        thisNote++; // advance note index
+
+        // to calculate the note duration, take one second
+        // divided by the note type.
+        //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
+        int noteDuration = PERIOD - (millis() - start_time); /// noteDurations[thisNote];
+        TimerFreeTone(TONE_PIN, melody[thisNote], noteDuration);
+
+      }
+    }
+  }
+} // end of void loop
+
+
+
+
+int hist_calc(double pbin[], double sig[], int n)
+{
+  // find max value of signal
+  int maxval = 0;
+  for (int i = 0; i < n; i++) {
+    if (sig[i] > maxval) {
+      maxval = sig[i];
+    }
+  }
+  int nbin = maxval + 1; // our max value also helps define the # of bins we have!
+  // Ensure the all values in bin count vector start at 0
+  for (int i = (nbin - 1000); i < nbin; i++)
+  {
+    pbin[i + 1000 - nbin] = 0;
+  }
+  //step through signal and assign each value to a bin
+  for (int i = 0; i < n; i++)
+  {
+    int temp = (int) round(sig[i] + 0.49);
+    if (temp < nbin || temp > (nbin - 1000)) {
+      pbin[temp + 1000 - nbin] = pbin[temp + 1000 - nbin] + 1;
+    }
+  } // end of FOR loop
+  return nbin;
+} // END of Function
+
+void Graph(MCUFRIEND_kbv &d, double x, double y, double gx, double gy, double w, double h, double xlo, double xhi, double xinc, double ylo, double yhi, double yinc, unsigned int gcolor, unsigned int acolor, unsigned int pcolor, unsigned int bcolor) {
+
+  double ydiv, xdiv;
+  // initialize old x and old y in order to draw the first point of the graph
+  // but save the transformed value
+  // note my transform funcition is the same as the map function, except the map uses long and we need doubles
+  //static double ox = (x - xlo) * ( w) / (xhi - xlo) + gx;
+  //static double oy = (y - ylo) * (gy - h - gy) / (yhi - ylo) + gy;
+  double i;
+  double temp;
+  int rot, newrot;
+
+  if (redraw == true) {
+
+    redraw = false;
+    ox = (x - xlo) * ( w) / (xhi - xlo) + gx;
+    oy = (y - ylo) * (gy - h - gy) / (yhi - ylo) + gy;
+    // draw y scale
+    for ( i = ylo; i <= yhi; i += yinc) {
+      // compute the transform
+      temp =  (i - ylo) * (gy - h - gy) / (yhi - ylo) + gy;
+
+      if (i == 0) {
+        d.drawLine(gx, temp, gx + w, temp, acolor);
+      }
+      else {
+        d.drawLine(gx, temp, gx + w, temp, gcolor);
+      }
+    }
+    // draw x scale
+    for (i = xlo; i <= xhi; i += xinc) {
+
+      // compute the transform
+
+      temp =  (i - xlo) * ( w) / (xhi - xlo) + gx;
+      if (i == 0) {
+        d.drawLine(temp, gy, temp, gy - h, acolor);
+      }
+      else {
+        d.drawLine(temp, gy, temp, gy - h, gcolor);
+      }
+    }
+  }
+
+  //graph drawn now plot the data
+  // the entire plotting code are these few lines...
+  // recall that ox and oy are initialized as static above
+  x =  (x - xlo) * ( w) / (xhi - xlo) + gx;
+  y =  (y - ylo) * (gy - h - gy) / (yhi - ylo) + gy;
+  d.drawLine(ox, oy, x, y, pcolor);
+  d.drawLine(ox, oy + 1, x, y + 1, pcolor);
+  d.drawLine(ox, oy - 1, x, y - 1, pcolor);
+  ox = x;
+  oy = y;
+
+}
