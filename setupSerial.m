@@ -8,8 +8,9 @@ flag = 1;
 obj = serial(comPort);
 set(obj,'DataBits',8);
 set(obj,'StopBits',1);
-set(obj,'BaudRate',9600);
+set(obj,'BaudRate',19200);
 set(obj,'Parity','none');
+set(obj,'Timeout',15);
 fopen(obj);
 a = 'b';
 while (a~='a') 
