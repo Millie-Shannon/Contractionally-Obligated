@@ -50,6 +50,8 @@ MCUFRIEND_kbv tft;
 #define NOTE_B3  247
 #define NOTE_01  280
 
+boolean healthy = true;
+
 int melody[] = {
   NOTE_C4, NOTE_C4, NOTE_C4, 0, NOTE_G3, 0, NOTE_B3, NOTE_C4
 };
@@ -78,10 +80,6 @@ int tmax = 60;
 int state = 1; // default state is 3
 int state2 = 1; // state2 defines if alarm is on/off
 
-int frequency[] = {7, 8, 8, 7, 7, 8};
-int current_freq = frequency[5];
-int duration[] = {3, 6, 3, 8, 4, 2};
-int current_dur = duration[5];
 int dur_freq_ind = 0; // this is an index; note to self: dur_freq_ind may actually be backwards
 
 int iter = 0;
@@ -96,7 +94,7 @@ uint16_t g_identifier;
 
 void setup(void) {
 
-  // STEP 1: SETUP Screen 
+  // STEP 1: SETUP Screen
   Serial.begin(9600);
   Serial.println(F("TFT LCD test"));
   pinMode(greenLEDPin, OUTPUT);
@@ -195,6 +193,19 @@ void loop(void) {
   button3 = digitalRead(35);
   button4 = digitalRead(37);
 
+  if (healthy == true) {
+    int frequency[] = {4, 5, 4, 4, 5, 4};
+    int current_freq = frequency[5];
+    int duration[] = {1, 0.6, 2, 0.6, 1.2, 1.2};
+    int current_dur = duration[5];
+  }
+  else {
+    int frequency[] = {7, 8, 8, 7, 7, 8};
+    int current_freq = frequency[5];
+    int duration[] = {3, 6, 3, 8, 4, 2};
+    int current_dur = duration[5];
+  }
+
   // STATE 3: Current State Screen
   if (state == 3) {
     tft.setRotation(3);
@@ -211,7 +222,7 @@ void loop(void) {
     tft.print(current_dur);
   }
 
-  // STATE 0: HISTORY Screen 
+  // STATE 0: HISTORY Screen
   if (state == 0) {
     // BUTTON 1: scroll forward in time
     if (button1 == LOW && time2 != tmax) {
@@ -251,7 +262,7 @@ void loop(void) {
     Serial.print(frequency[dur_freq_ind]);
     Serial.print("/t");
     Serial.println(duration[dur_freq_ind]);
-    
+
   } // end of STATE 0
 
 
@@ -291,12 +302,12 @@ void loop(void) {
     // 2400 pts = 10 minutes of data at 4 hz
     // graph one point at a time
     for (x = 0; x <= 120; x += .1) {
-      y = 3*sin((0.42)*x) +3;
+      y = 3 * sin((0.42) * x) + 3;
       //       inputs, gx, gy, w,  h,    xlo,xhi,xinc,ylo,yhi,yinc
       Graph(tft, x, y, 50, 290, 390, 260, 0, 120, 10, -10, 20, 50, "CONTRACTIONS", " Time [s]", "UC [arb. units]", DKBLUE, RED, GREEN, WHITE, BLACK);
     }
-    
-    // switch to state 2 to stop from continuously plotting 
+
+    // switch to state 2 to stop from continuously plotting
     state = 2;
 
   }
@@ -305,7 +316,7 @@ void loop(void) {
   if (state == 2) {
   }
 
-  
+
   // Check for dangerous ranges!
   if (frequency[5] > 6 || frequency[5] < 3) {
     if (frequency[4] > 6 || frequency[4] < 3) {
@@ -315,7 +326,7 @@ void loop(void) {
         digitalWrite(greenLEDPin, LOW);
         if (state2 == 1) { // play tone
           Serial.println("Playing Tone!");
-          
+
           for (int thisNote = 0; thisNote < 4; thisNote++) {
 
             // to calculate the note duration, take one second
@@ -331,8 +342,8 @@ void loop(void) {
         }
       }
     }
-  } 
-  else { // if not dangerous... 
+  }
+  else { // if not dangerous...
     digitalWrite(redLEDPin, LOW); //turn OFF red LED
     digitalWrite(greenLEDPin, HIGH);
   }
